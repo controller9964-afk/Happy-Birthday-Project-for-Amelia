@@ -1,18 +1,32 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiClient, getWebSocketUrl, validateText } from "@/lib/api-client";
 import {
-  parseServerChatEvent,
-  type ChatMessage,
-  type ClientChatEvent,
-  type ServerChatEvent,
-} from "@/lib/chat-protocol";
-import { useWebSocket } from "@/hooks/use-web-socket";
+  connectToSharedChat,
+  loadSharedChatHistory,
+  sendSharedChatMessage,
+  type ChatConnectionStatus,
+  type SharedChatConnection,
+} from "@/lib/shared-chat";
+import type { ChatMessage } from "@/lib/supabase";
+import { validateText } from "@/lib/text-validation";
 
 const nicknameKey = "amelia-chat-nickname";
 const maximumNicknameLength = 24;
 const maximumMessageLength = 500;
+const maximumStoredMessages = 100;
+const configurationMessage = "Shared chat is not configured yet. Add the Supabase URL and anon key to the frontend environment.";
+
+function isChatMessage(value: unknown): value is ChatMessage {
+  if (typeof value !== "object" || value === null) return false;
+  const message = value as Record<string, unknown>;
+  return (
+    typeof message.id === "string" &&
+    typeof message.nickname === "string" &&
+    typeof message.content === "string" &&
+    typeof message.created_at === "string"
+  );
+}
 
 export function useChat() {
   const [draftNickname, setDraftNickname] = useState("");
@@ -20,98 +34,36 @@ export function useChat() {
   const [nickname, setNickname] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [online, setOnline] = useState(0);
+  const [connection, setConnection] = useState<"idle" | "connecting" | "connected" | "reconnecting" | "disconnected">("idle");
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
-  const historyLoadedRef = useRef(false);
-  const nicknameRef = useRef("");
-  const pendingMessagesRef = useRef(new Map<string, string>());
-  const initializedSocketsRef = useRef(new WeakSet<WebSocket>());
-  const markConnectedRef = useRef<() => void>(() => {});
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const channelRef = useRef<SharedChatConnection | null>(null);
 
-  const addOrUpdateMessage = useCallback((incoming: ChatMessage) => {
-    setMessages((current) => {
-      const existing = current.findIndex((message) => message.id === incoming.id);
-      if (existing < 0) return [...current, incoming].slice(-100);
-      const updated = [...current];
-      updated[existing] = { ...updated[existing], ...incoming };
-      return updated;
-    });
+  const mergeMessages = useCallback((incoming: ChatMessage[]) => {
+    const merged = new Map(messagesRef.current.map((message) => [message.id, message]));
+    for (const message of incoming) merged.set(message.id, message);
+    const next = [...merged.values()]
+      .sort((left, right) => left.created_at.localeCompare(right.created_at))
+      .slice(-maximumStoredMessages);
+    messagesRef.current = next;
+    setMessages(next);
   }, []);
-
-  const handleServerEvent = useCallback((data: ServerChatEvent, socket: WebSocket) => {
-    if (data.type === "message_history") {
-      const history = data.messages.slice(-100);
-      historyLoadedRef.current = true;
-      for (const message of history) {
-        if (message.client_message_id) pendingMessagesRef.current.delete(message.client_message_id);
-      }
-      setMessages(history.map((message) => ({ ...message, is_self: Boolean(message.is_self) })));
-    } else if (data.type === "online_count") {
-      setOnline(typeof data.count === "number" ? data.count : 0);
-      if (historyLoadedRef.current && !initializedSocketsRef.current.has(socket)) {
-        initializedSocketsRef.current.add(socket);
-        markConnectedRef.current();
-        setStatusMessage("");
-        setError("");
-        for (const [clientMessageId, content] of pendingMessagesRef.current) {
-          const pending: ClientChatEvent = { type: "message", client_message_id: clientMessageId, content };
-          socket.send(JSON.stringify(pending));
-        }
-      }
-    } else if (data.type === "message") {
-      const message = { ...data.message, is_self: Boolean(data.is_self) };
-      addOrUpdateMessage(message);
-      if (message.client_message_id) pendingMessagesRef.current.delete(message.client_message_id);
-    } else if (data.type === "join") {
-      setStatusMessage(data.nickname ? `${data.nickname} found a seat.` : "Someone joined the room.");
-      if (typeof data.online === "number") setOnline(data.online);
-    } else if (data.type === "leave") {
-      setStatusMessage(data.nickname ? `${data.nickname} stepped away.` : "Someone stepped away.");
-      if (typeof data.online === "number") setOnline(data.online);
-    } else if (data.type === "error") {
-      setError(data.error ?? "That message could not be sent.");
-    } else if (data.type === "moderation_event") {
-      if (data.event === "message_deleted" && typeof data.message_id === "number") {
-        setMessages((current) => current.filter((message) => message.id !== data.message_id));
-      } else if (data.event === "muted") {
-        setError("A moderator has paused your messages for now.");
-      }
-    }
-  }, [addOrUpdateMessage]);
-
-  const callbacksRef = useRef(handleServerEvent);
-  callbacksRef.current = handleServerEvent;
-  const onMessage = useCallback((event: ServerChatEvent, socket: WebSocket) => callbacksRef.current(event, socket), []);
-
-  const socketReconnect = useWebSocket<ServerChatEvent>({
-    url: getWebSocketUrl("/ws/chat"),
-    parseMessage: parseServerChatEvent,
-    onOpen: (socket) => {
-      if (!nicknameRef.current) return;
-      const join: ClientChatEvent = { type: "join", nickname: nicknameRef.current };
-      socket.send(JSON.stringify(join));
-    },
-    onMessage,
-    shouldReconnect: (event) => event.code !== 1000 && event.code !== 1008,
-    onDisconnect: (event) => {
-      if (event.code === 1008) setError(event.reason || "You can’t rejoin the room right now.");
-    },
-    onReconnectExhausted: () => setError("The chat could not reconnect. Please try joining again."),
-  });
-  markConnectedRef.current = socketReconnect.markConnected;
 
   useEffect(() => {
     try {
-      setDraftNickname(localStorage.getItem(nicknameKey) ?? "");
+      setDraftNickname(window.localStorage.getItem(nicknameKey) ?? "");
     } catch {
-      setStatusMessage("Your nickname won’t be saved in this browser.");
+      setStatusMessage("Your nickname cannot be saved in this browser.");
     }
     setNicknameReady(true);
-  }, []);
 
-  useEffect(() => {
-    if (socketReconnect.error) setError(socketReconnect.error);
-  }, [socketReconnect.error]);
+    return () => {
+      const channel = channelRef.current;
+      channelRef.current = null;
+      if (channel) void channel.disconnect();
+    };
+  }, []);
 
   const joinRoom = useCallback((nicknameInput: string) => {
     const clean = nicknameInput.trim().replace(/\s+/g, " ");
@@ -120,64 +72,110 @@ export function useChat() {
       setError(`Please choose a nickname between 1 and ${maximumNicknameLength} characters.`);
       return false;
     }
-    nicknameRef.current = clean;
     try {
-      localStorage.setItem(nicknameKey, clean);
+      window.localStorage.setItem(nicknameKey, clean);
     } catch {
-      setStatusMessage("Your nickname won’t be saved in this browser.");
+      setError("Your nickname could not be saved in this browser. Check its storage settings and try again.");
+      return false;
     }
-    historyLoadedRef.current = false;
+
+    const previousChannel = channelRef.current;
+    channelRef.current = null;
+    if (previousChannel) {
+      void previousChannel.disconnect().catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : "The previous chat connection could not be closed.");
+      });
+    }
+
     setNickname(clean);
     setDraftNickname(clean);
-    setMessages([]);
+    setConnection("connecting");
+    setOnline(0);
     setError("");
-    setStatusMessage("");
-    socketReconnect.connect();
+    setStatusMessage("Connecting to the shared Cozy Corner…");
+
+    let channel: SharedChatConnection | null = null;
+    channel = connectToSharedChat(clean, {
+      onMessage: (message) => {
+        if (channelRef.current === channel) mergeMessages([message]);
+      },
+      onPresence: (count) => {
+        if (channelRef.current === channel) setOnline(count);
+      },
+      onError: (message) => {
+        if (channelRef.current === channel) setError(message);
+      },
+      onStatus: (status: ChatConnectionStatus) => {
+        if (channelRef.current !== channel) return;
+        if (status === "SUBSCRIBED") {
+          setConnection("connected");
+          setStatusMessage("Connected to the shared Cozy Corner.");
+          setError("");
+          void loadSharedChatHistory()
+            .then((history) => {
+              if (channelRef.current === channel) mergeMessages(history);
+            })
+            .catch((reason: unknown) => {
+              if (channelRef.current === channel) {
+                setError(reason instanceof Error ? reason.message : "Could not load shared chat history.");
+              }
+            });
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          setConnection("reconnecting");
+          setError("The shared chat connection was interrupted. Reconnecting…");
+        } else if (status === "CLOSED") {
+          setConnection("disconnected");
+        }
+      },
+    });
+    if (!channel) {
+      setConnection("idle");
+      setError(configurationMessage);
+      return false;
+    }
+
+    channelRef.current = channel;
     return true;
-  }, [socketReconnect.connect]);
+  }, [mergeMessages]);
 
   const leaveRoom = useCallback(() => {
-    historyLoadedRef.current = false;
-    pendingMessagesRef.current.clear();
-    socketReconnect.close();
-    setOnline((current) => Math.max(0, current - 1));
-    setStatusMessage("You’ve left the room. You’re welcome back anytime.");
-  }, [socketReconnect.close]);
+    const channel = channelRef.current;
+    channelRef.current = null;
+    setConnection("idle");
+    setOnline(0);
+    setStatusMessage("You’ve left the shared room. The conversation remains available to other visitors.");
+    if (channel) void channel.disconnect().catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : "The chat connection could not be closed cleanly.");
+    });
+  }, []);
 
-  const sendMessage = useCallback((contentInput: string) => {
+  const sendMessage = useCallback(async (contentInput: string) => {
     const content = contentInput.trim();
     const validationError = validateText(content, maximumMessageLength);
     if (validationError) {
       setError(validationError);
       return false;
     }
-    if (socketReconnect.status !== "connected") {
-      setError("You’re offline. Your message will be ready when you reconnect.");
+    if (connection !== "connected" || !nickname) {
+      setError("Connect to the shared room before sending a message.");
       return false;
     }
 
-    const clientMessageId = crypto.randomUUID();
-    pendingMessagesRef.current.set(clientMessageId, content);
-    const event: ClientChatEvent = { type: "message", client_message_id: clientMessageId, content };
-    if (!socketReconnect.send(event)) {
-      setError("Your message could not be sent. It will be retried after reconnecting.");
-      return false;
-    }
-    setError("");
-    return true;
-  }, [socketReconnect.send, socketReconnect.status]);
-
-  const reportMessage = useCallback(async (messageId: number) => {
     try {
-      await apiClient.reportChatMessage(messageId, "Reported by a Cozy Corner visitor");
-      setStatusMessage("Thanks. Your report was sent to the moderators.");
+      const message = await sendSharedChatMessage(nickname, content);
+      if (!isChatMessage(message)) {
+        setError("The shared chat returned an invalid message.");
+        return false;
+      }
+      mergeMessages([message]);
       setError("");
+      setStatusMessage("Your message was shared with the room.");
       return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Your report could not be sent.");
+      setError(reason instanceof Error ? reason.message : "Your message could not be shared.");
       return false;
     }
-  }, []);
+  }, [connection, mergeMessages, nickname]);
 
   return {
     draftNickname,
@@ -186,13 +184,11 @@ export function useChat() {
     nickname,
     messages,
     online,
-    connection: socketReconnect.status,
+    connection,
     statusMessage,
     error,
-    setError,
     joinRoom,
     leaveRoom,
     sendMessage,
-    reportMessage,
   };
 }

@@ -30,39 +30,7 @@ test("the birthday surprise reveals a handful of wishes", async ({ page }) => {
   await expect(page.getByText("New things that make you curious")).toBeVisible();
 });
 
-test("the birthday journey continues through a real-shaped guestbook API and public chat", async ({ page }) => {
-  await page.route("**/api/v1/wishes", async (route) => {
-    if (route.request().method() === "GET") {
-      await route.fulfill({ status: 200, json: [] });
-      return;
-    }
-    const request = route.request().postDataJSON() as { nickname: string; message: string };
-    await route.fulfill({
-      status: 201,
-      json: { id: 21, nickname: request.nickname, message: request.message, created_at: new Date().toISOString() },
-    });
-  });
-  await page.routeWebSocket("**/ws/chat", (socket) => {
-    socket.onMessage((serialized) => {
-      const event = JSON.parse(String(serialized)) as { type: string; nickname?: string; content?: string };
-      if (event.type === "join") {
-        socket.send(JSON.stringify({ type: "message_history", messages: [] }));
-        socket.send(JSON.stringify({ type: "online_count", count: 1 }));
-      } else if (event.type === "message") {
-        socket.send(JSON.stringify({
-          type: "message",
-          is_self: true,
-          message: {
-            id: 22,
-            nickname: event.nickname ?? "Birthday friend",
-            content: event.content ?? "",
-            created_at: new Date().toISOString(),
-          },
-        }));
-      }
-    });
-  });
-
+test("the birthday journey continues through the local guestbook and shared chat setup", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: /read your birthday note/i }).click();
   await page.getByRole("button", { name: /open a tiny birthday surprise/i }).click();
@@ -71,14 +39,14 @@ test("the birthday journey continues through a real-shaped guestbook API and pub
   await page.getByRole("link", { name: "Guestbook" }).click();
   await page.getByLabel("Your name").fill("A friend");
   await page.getByLabel("A little birthday note").fill("Wishing you a lovely birthday!");
-  await page.getByRole("button", { name: "Sign the guestbook" }).click();
-  await expect(page.getByText("Your birthday wish has been added. Thank you!")).toBeVisible();
+  await page.getByRole("button", { name: "Save in this browser" }).click();
+  await expect(page.getByText("Your birthday wish has been saved in this browser. Thank you!")).toBeVisible();
   await expect(page.getByText("Wishing you a lovely birthday!")).toBeVisible();
 
   await page.getByRole("link", { name: "Cozy Corner" }).click();
   await page.getByLabel("Choose a nickname").fill("Story Friend");
   await page.getByRole("button", { name: /join the room/i }).click();
-  await expect(page.getByText("Story Friend, you’re in good company.")).toBeVisible();
+  await expect(page.getByText(/shared chat is not configured yet/i)).toBeVisible();
 });
 
 test("mobile navigation opens and follows a destination", async ({ page }) => {
@@ -127,17 +95,19 @@ test("every page fits mobile, tablet, and desktop viewports", async ({ page }) =
   }
 });
 
-test("the decorative star cluster follows a fine pointer", async ({ page }) => {
+test("the cursor leaves a fading sparkle trail for a fine pointer", async ({ page }) => {
   await page.goto("/");
   const stars = page.getByTestId("cursor-stars");
   await expect(stars).toHaveAttribute("data-ready", "true");
-  await expect(stars).toHaveCSS("opacity", "0");
   await page.mouse.move(240, 180);
-  await expect(stars).toHaveCSS("opacity", "1");
-  await expect.poll(() => stars.locator(".cursor-wand").evaluate((element) => (element as HTMLElement).style.transform)).toContain("240px");
+  await page.mouse.move(280, 200, { steps: 5 });
+  const trail = stars.locator(".wand-trail-spark");
+  await expect.poll(async () => Number(await stars.getAttribute("data-trail-count"))).toBeGreaterThan(0);
+  await expect(trail.first()).toHaveCSS("animation-name", "wand-sparkle");
+  await expect(stars.locator(".cursor-wand")).toHaveCount(0);
 });
 
-test("the cursor leaves a fading sparkle-wand trail", async ({ page }) => {
+test("the cursor trail fades away after pointer movement stops", async ({ page }) => {
   await page.goto("/");
   const stars = page.getByTestId("cursor-stars");
   await expect(stars).toHaveAttribute("data-ready", "true");

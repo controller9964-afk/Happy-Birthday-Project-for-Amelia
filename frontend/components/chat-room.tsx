@@ -8,7 +8,6 @@ import { motion } from "framer-motion";
 import { useChat } from "@/hooks/use-chat";
 import {
   Cat,
-  Flag,
   Heart,
   MessageCircle,
   Moon,
@@ -17,8 +16,6 @@ import {
   Smile,
   Sparkles,
   Star,
-  Wifi,
-  WifiOff,
 } from "lucide-react";
 
 const emojis = ["🎂", "💜", "✨", "🐈‍⬛", "📚", "🎃", "🌙", "💕", "🎶", "🕯️"];
@@ -39,7 +36,6 @@ export function ChatRoom() {
     joinRoom,
     leaveRoom,
     sendMessage,
-    reportMessage,
   } = useChat();
   const [content, setContent] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -57,14 +53,9 @@ export function ChatRoom() {
     joinRoom(draftNickname);
   };
 
-  const send = (event: FormEvent<HTMLFormElement>) => {
+  const send = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (sendMessage(content)) setContent("");
-  };
-
-  const report = async (id: number) => {
-    if (!window.confirm("Send this message to the moderators for review?")) return;
-    await reportMessage(id);
+    if (await sendMessage(content)) setContent("");
   };
 
   const addEmoji = (emoji: string) => {
@@ -94,7 +85,7 @@ export function ChatRoom() {
           <Chip
             aria-live="polite"
             icon={<span className={`ml-2 h-2 w-2 rounded-full ${connected ? "bg-emerald-300 shadow-[0_0_10px_rgba(110,231,183,.8)]" : "bg-[#b8a9c1]"}`} />}
-            label={connected ? onlineText : connection === "reconnecting" ? "Reconnecting…" : "A seat is waiting"}
+            label={connected ? onlineText : connection === "connecting" ? "Connecting…" : connection === "reconnecting" ? "Reconnecting…" : "A seat is waiting"}
             sx={{ color: "#ded2e1", border: "1px solid rgba(255,255,255,.1)", backgroundColor: "rgba(25,19,38,.88)" }}
           />
         </header>
@@ -106,7 +97,7 @@ export function ChatRoom() {
               <summary className="cursor-pointer list-none font-medium text-[#eadde9] outline-none focus-visible:underline [&::-webkit-details-marker]:hidden">
                 A few cozy room rules <span className="text-rose">· be kind, keep it friendly</span>
               </summary>
-              <p className="mt-2 max-w-xl text-xs leading-5 text-[#b5a7bd]">Messages are public. Keep personal information private, respect one another, and report anything that feels unkind. Moderators can remove messages and pause chat access.</p>
+              <p className="mt-2 max-w-xl text-xs leading-5 text-[#b5a7bd]">Messages are shared with everyone in the room. Nicknames are unverified display names, and this room has no moderator tools. Keep personal information private and be kind.</p>
             </details>
           </div>
           {connected && (
@@ -139,10 +130,10 @@ export function ChatRoom() {
                   placeholder="What should we call you?"
                   aria-describedby="nickname-hint"
                 />
-                <p id="nickname-hint" className="mt-1.5 px-1 text-[11px] text-[#9f91a8]">No account needed · up to {maximumNicknameLength} characters</p>
+                <p id="nickname-hint" className="mt-1.5 px-1 text-[11px] text-[#9f91a8]">Your nickname is public · up to {maximumNicknameLength} characters</p>
               </div>
               <Button type="submit" variant="contained" className="min-h-[50px] md:self-start" disabled={!nicknameReady || !draftNickname.trim() || connection === "connecting" || connection === "reconnecting"} endIcon={<MessageCircle size={16} aria-hidden="true" />}>
-                {connection === "connecting" || connection === "reconnecting" ? "Finding a seat…" : "Join the room"}
+                {connection === "connecting" || connection === "reconnecting" ? "Connecting…" : "Join the room"}
               </Button>
             </form>
           </section>
@@ -166,7 +157,7 @@ export function ChatRoom() {
                 className="mx-auto mb-3 opacity-90"
               />
               <p className="serif text-xl text-[#e8d7e8]">A quiet little room for now</p>
-              <p className="mt-2 text-sm leading-6 text-[#a99bb0]">Pick a nickname and come say hello. Birthday wishes and friendly conversation are always welcome.</p>
+              <p className="mt-2 text-sm leading-6 text-[#a99bb0]">Pick a nickname and connect to share birthday wishes with other visitors.</p>
             </div>
           )}
           {connected && messages.length === 0 && (
@@ -176,40 +167,31 @@ export function ChatRoom() {
               <p className="mt-2 text-sm leading-6 text-[#a99bb0]">Leave a little hello for the next person who wanders in.</p>
             </div>
           )}
-          {messages.map((message) => (
-            <motion.article key={message.id} initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className={`group flex max-w-[92%] gap-3 sm:max-w-[82%] ${message.is_self ? "ml-auto flex-row-reverse" : ""}`}>
-              <span className={`mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${message.is_self ? "bg-gradient-to-br from-[#e7acc2] to-[#b384bc] text-[#26182e]" : "border border-white/10 bg-[#372944] text-[#e5c4d5]"}`}>
-                {message.nickname.slice(0, 1).toLocaleUpperCase()}
-              </span>
-              <div className={`min-w-0 ${message.is_self ? "text-right" : ""}`}>
-                <div className={`mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 ${message.is_self ? "justify-end" : ""}`}>
-                  <span className="text-xs font-semibold text-[#f2dce7]">{message.is_self ? "You" : message.nickname}</span>
-                  <time className="text-[10px] text-[#9889a1]" dateTime={message.created_at}>
-                    {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </time>
+          {messages.map((message) => {
+            const isSelf = message.nickname === nickname;
+            return (
+              <motion.article key={message.id} initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className={`flex max-w-[92%] gap-3 sm:max-w-[82%] ${isSelf ? "ml-auto flex-row-reverse" : ""}`}>
+                <span className={`mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${isSelf ? "bg-gradient-to-br from-[#e7acc2] to-[#b384bc] text-[#26182e]" : "border border-white/10 bg-[#372944] text-[#e5c4d5]"}`}>
+                  {message.nickname.slice(0, 1).toLocaleUpperCase()}
+                </span>
+                <div className={`min-w-0 ${isSelf ? "text-right" : ""}`}>
+                  <div className={`mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 ${isSelf ? "justify-end" : ""}`}>
+                    <span className="text-xs font-semibold text-[#f2dce7]">{isSelf ? "You" : message.nickname}</span>
+                    <time className="text-[10px] text-[#9889a1]" dateTime={message.created_at}>
+                      {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </time>
+                  </div>
+                  <div className={`chat-bubble relative text-left shadow-sm ${isSelf ? "chat-bubble-self rounded-tr-sm" : "chat-bubble-other rounded-tl-sm"}`}>
+                    <Typography component="p" variant="body2" className="whitespace-pre-wrap break-words text-sm leading-6" sx={{ color: "inherit", fontSize: ".875rem", lineHeight: 1.65 }}>{message.content}</Typography>
+                  </div>
                 </div>
-                <div className={`chat-bubble relative text-left shadow-sm ${message.is_self ? "chat-bubble-self rounded-tr-sm" : "chat-bubble-other rounded-tl-sm"}`}>
-                  <Typography component="p" variant="body2" className="whitespace-pre-wrap break-words text-sm leading-6" sx={{ color: "inherit", fontSize: ".875rem", lineHeight: 1.65 }}>{message.content}</Typography>
-                </div>
-              </div>
-              {!message.is_self && connected && (
-                <IconButton
-                  type="button"
-                  onClick={() => void report(message.id)}
-                  aria-label={`Report message from ${message.nickname}`}
-                  size="small"
-                  className="self-center opacity-70 transition sm:opacity-0 sm:group-hover:opacity-100"
-                  sx={{ color: "#92849a", "&:hover": { color: "primary.main", backgroundColor: "rgba(255,255,255,.05)" } }}
-                >
-                  <Flag size={14} aria-hidden="true" />
-                </IconButton>
-              )}
-            </motion.article>
-          ))}
+              </motion.article>
+            );
+          })}
         </div>
 
         <div aria-live="polite" className="min-h-7 border-t border-white/[.06] px-5 pt-2 text-center text-xs text-[#b8a9c1]">
-          {error ? <Alert severity="error" variant="standard" sx={{ justifyContent: "center", py: 0, background: "transparent", color: "#f4b4c8", "& .MuiAlert-icon": { py: 0.5 } }}>{error}</Alert> : statusMessage || (connection === "reconnecting" ? "The stars are helping us find the room again…" : connection === "connected" ? `${nickname}, you’re in good company.` : "")}
+          {error ? <Alert severity="error" variant="standard" sx={{ justifyContent: "center", py: 0, background: "transparent", color: "#f4b4c8", "& .MuiAlert-icon": { py: 0.5 } }}>{error}</Alert> : statusMessage || (connected ? `${nickname}, you’re in good company.` : "")}
         </div>
 
         <form onSubmit={send} className="chat-composer flex items-end gap-2 border-t border-white/[.08] p-4 sm:gap-3 sm:px-6 sm:py-5">
@@ -259,7 +241,7 @@ export function ChatRoom() {
           </Button>
         </form>
         <footer className="flex flex-wrap items-center justify-between gap-2 px-5 pb-4 text-[11px] text-[#93849b] sm:px-6">
-          <span className="flex items-center gap-1.5"><span>{connected ? <Wifi size={12} /> : <WifiOff size={12} />}</span>{connection === "connected" ? "Connected in real time" : connection === "reconnecting" ? "Trying to reconnect" : "Messages are public"}</span>
+          <span>{connected ? "Shared in real time · be kind to everyone" : "Messages are shared with everyone in the room"}</span>
           <span>{content.length}/{maximumMessageLength}</span>
         </footer>
       </Paper>

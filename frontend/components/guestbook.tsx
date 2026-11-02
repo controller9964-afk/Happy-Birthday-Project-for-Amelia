@@ -31,7 +31,7 @@ export function Guestbook() {
         {submitError && <Alert severity="error" role="alert" sx={{ mt: 2, backgroundColor: "rgba(242,154,181,.12)", color: "#ffdbe6" }}>{submitError}</Alert>}
         {success && <Alert severity="success" role="status" sx={{ mt: 2, backgroundColor: "rgba(134,223,188,.1)", color: "#c5f5df" }}>{success}</Alert>}
         <motion.div className="mt-5" whileTap={{ scale: 0.98 }}>
-          <Button type="submit" variant="contained" fullWidth disabled={submitting} endIcon={<Send size={15} />}>{submitting ? "Saving your wish…" : "Sign the guestbook"}</Button>
+          <Button type="submit" variant="contained" fullWidth disabled={submitting} endIcon={<Send size={15} />}>{submitting ? "Saving your wish…" : "Save in this browser"}</Button>
         </motion.div>
       </Paper>
       <div>

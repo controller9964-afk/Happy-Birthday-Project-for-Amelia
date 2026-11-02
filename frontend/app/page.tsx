@@ -269,8 +269,8 @@ export default function HomePage() {
           Stay for a song, a story, or a hello.
         </Typography>
         <p className="mx-auto mt-4 max-w-xl leading-7 text-[#c9bbd0]">
-          Drop into the public chat to share a friendly birthday wish with
-          everyone gathered here.
+          Leave a friendly birthday hello in a private chat saved only in your
+          browser.
         </p>
         <motion.div className="mt-7 inline-block" whileTap={{ scale: 0.97 }}>
           <Button

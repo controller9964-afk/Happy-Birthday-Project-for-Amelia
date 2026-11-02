@@ -1,13 +1,9 @@
 .env
 .env.*
 !.env.example
+!frontend/.env.example
 node_modules/
 .next/
 coverage/
 playwright-report/
 test-results/
-__pycache__/
-.pytest_cache/
-.venv/
-*.py[cod]
-*.db
