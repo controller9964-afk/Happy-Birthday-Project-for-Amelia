@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import Image from "next/image";
-import { Alert, Button, Chip, IconButton, Paper, TextField, Typography } from "@mui/material";
+import { Alert, Button, IconButton, Paper, TextField, Typography } from "@mui/material";
 import { motion } from "framer-motion";
 import { useChat } from "@/hooks/use-chat";
 import {
@@ -16,6 +16,7 @@ import {
   Smile,
   Sparkles,
   Star,
+  Trash2,
 } from "lucide-react";
 
 const emojis = ["🎂", "💜", "✨", "🐈‍⬛", "📚", "🎃", "🌙", "💕", "🎶", "🕯️"];
@@ -29,13 +30,13 @@ export function ChatRoom() {
     nicknameReady,
     nickname,
     messages,
-    online,
     connection,
     statusMessage,
     error,
     joinRoom,
     leaveRoom,
     sendMessage,
+    deleteMessage,
   } = useChat();
   const [content, setContent] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -62,7 +63,6 @@ export function ChatRoom() {
     setContent((current) => (current + emoji).slice(0, maximumMessageLength));
   };
 
-  const onlineText = `${online} ${online === 1 ? "visitor" : "visitors"} here`;
   const connected = connection === "connected";
 
   return (
@@ -82,12 +82,9 @@ export function ChatRoom() {
               <p className="mt-1 text-xs text-[#b8a9c1]">A little hello beneath the birthday stars</p>
             </div>
           </div>
-          <Chip
-            aria-live="polite"
-            icon={<span className={`ml-2 h-2 w-2 rounded-full ${connected ? "bg-emerald-300 shadow-[0_0_10px_rgba(110,231,183,.8)]" : "bg-[#b8a9c1]"}`} />}
-            label={connected ? onlineText : connection === "connecting" ? "Connecting…" : connection === "reconnecting" ? "Reconnecting…" : "A seat is waiting"}
-            sx={{ color: "#ded2e1", border: "1px solid rgba(255,255,255,.1)", backgroundColor: "rgba(25,19,38,.88)" }}
-          />
+          <span aria-live="polite" className="rounded-full border border-white/10 bg-[#191326]/90 px-3 py-1.5 text-xs text-[#ded2e1]">
+            {connected ? "Saved in this browser" : "A seat is waiting"}
+          </span>
         </header>
 
         <section className="grid gap-3 border-b border-white/[.08] bg-[#191326]/70 px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center sm:px-7">
@@ -97,7 +94,7 @@ export function ChatRoom() {
               <summary className="cursor-pointer list-none font-medium text-[#eadde9] outline-none focus-visible:underline [&::-webkit-details-marker]:hidden">
                 A few cozy room rules <span className="text-rose">· be kind, keep it friendly</span>
               </summary>
-              <p className="mt-2 max-w-xl text-xs leading-5 text-[#b5a7bd]">Messages are shared with everyone in the room. Nicknames are unverified display names, and this room has no moderator tools. Keep personal information private and be kind.</p>
+              <p className="mt-2 max-w-xl text-xs leading-5 text-[#b5a7bd]">Messages are saved only in this browser and are not shared with other visitors. Anyone using this browser can delete any saved message.</p>
             </details>
           </div>
           {connected && (
@@ -132,8 +129,8 @@ export function ChatRoom() {
                 />
                 <p id="nickname-hint" className="mt-1.5 px-1 text-[11px] text-[#9f91a8]">Your nickname is public · up to {maximumNicknameLength} characters</p>
               </div>
-              <Button type="submit" variant="contained" className="min-h-[50px] md:self-start" disabled={!nicknameReady || !draftNickname.trim() || connection === "connecting" || connection === "reconnecting"} endIcon={<MessageCircle size={16} aria-hidden="true" />}>
-                {connection === "connecting" || connection === "reconnecting" ? "Connecting…" : "Join the room"}
+              <Button type="submit" variant="contained" className="min-h-[50px] md:self-start" disabled={!nicknameReady || !draftNickname.trim()} endIcon={<MessageCircle size={16} aria-hidden="true" />}>
+                Join the room
               </Button>
             </form>
           </section>
@@ -157,14 +154,14 @@ export function ChatRoom() {
                 className="mx-auto mb-3 opacity-90"
               />
               <p className="serif text-xl text-[#e8d7e8]">A quiet little room for now</p>
-              <p className="mt-2 text-sm leading-6 text-[#a99bb0]">Pick a nickname and connect to share birthday wishes with other visitors.</p>
+              <p className="mt-2 text-sm leading-6 text-[#a99bb0]">Pick a nickname to save birthday wishes in this browser.</p>
             </div>
           )}
           {connected && messages.length === 0 && (
             <div className="m-auto max-w-sm text-center">
               <Sparkles size={20} className="mx-auto mb-3 text-gold" aria-hidden="true" />
               <p className="serif text-xl text-[#e8d7e8]">You’re the first one in</p>
-              <p className="mt-2 text-sm leading-6 text-[#a99bb0]">Leave a little hello for the next person who wanders in.</p>
+              <p className="mt-2 text-sm leading-6 text-[#a99bb0]">Leave a little hello to revisit later in this browser.</p>
             </div>
           )}
           {messages.map((message) => {
@@ -181,8 +178,19 @@ export function ChatRoom() {
                       {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </time>
                   </div>
-                  <div className={`chat-bubble relative text-left shadow-sm ${isSelf ? "chat-bubble-self rounded-tr-sm" : "chat-bubble-other rounded-tl-sm"}`}>
-                    <Typography component="p" variant="body2" className="whitespace-pre-wrap break-words text-sm leading-6" sx={{ color: "inherit", fontSize: ".875rem", lineHeight: 1.65 }}>{message.content}</Typography>
+                  <div className="flex items-start gap-1">
+                    <div className={`chat-bubble relative text-left shadow-sm ${isSelf ? "chat-bubble-self rounded-tr-sm" : "chat-bubble-other rounded-tl-sm"}`}>
+                      <Typography component="p" variant="body2" className="whitespace-pre-wrap break-words text-sm leading-6" sx={{ color: "inherit", fontSize: ".875rem", lineHeight: 1.65 }}>{message.content}</Typography>
+                    </div>
+                    <IconButton
+                      type="button"
+                      size="small"
+                      aria-label={`Delete message from ${message.nickname}`}
+                      onClick={() => deleteMessage(message.id)}
+                      sx={{ color: "#b8a9c1", "&:hover": { color: "#f4b4c8", backgroundColor: "rgba(244,180,200,.08)" } }}
+                    >
+                      <Trash2 size={15} aria-hidden="true" />
+                    </IconButton>
                   </div>
                 </div>
               </motion.article>
@@ -241,7 +249,7 @@ export function ChatRoom() {
           </Button>
         </form>
         <footer className="flex flex-wrap items-center justify-between gap-2 px-5 pb-4 text-[11px] text-[#93849b] sm:px-6">
-          <span>{connected ? "Shared in real time · be kind to everyone" : "Messages are shared with everyone in the room"}</span>
+          <span>{connected ? "Saved only in this browser" : "Chat history stays in this browser"}</span>
           <span>{content.length}/{maximumMessageLength}</span>
         </footer>
       </Paper>

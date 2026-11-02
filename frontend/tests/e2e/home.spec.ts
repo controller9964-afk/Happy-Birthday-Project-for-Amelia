@@ -30,7 +30,7 @@ test("the birthday surprise reveals a handful of wishes", async ({ page }) => {
   await expect(page.getByText("New things that make you curious")).toBeVisible();
 });
 
-test("the birthday journey continues through the local guestbook and shared chat setup", async ({ page }) => {
+test("the birthday journey continues through the local guestbook and chat", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: /read your birthday note/i }).click();
   await page.getByRole("button", { name: /open a tiny birthday surprise/i }).click();
@@ -46,7 +46,7 @@ test("the birthday journey continues through the local guestbook and shared chat
   await page.getByRole("link", { name: "Cozy Corner" }).click();
   await page.getByLabel("Choose a nickname").fill("Story Friend");
   await page.getByRole("button", { name: /join the room/i }).click();
-  await expect(page.getByText(/shared chat is not configured yet/i)).toBeVisible();
+  await expect(page.getByText("Connected to this browser’s Cozy Corner.")).toBeVisible();
 });
 
 test("mobile navigation opens and follows a destination", async ({ page }) => {

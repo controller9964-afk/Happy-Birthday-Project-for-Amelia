@@ -8,8 +8,8 @@ export default function ChatPage() {
         eyebrow="A friendly little gathering"
         title="The Cozy Corner"
       >
-        Choose a nickname to join the shared room. Messages are visible to
-        everyone connected, so keep personal details private.
+        Choose a nickname to open the chat stored in this browser. Other
+        visitors cannot see these messages, and you can delete any message.
       </PageHeading>
       <ChatRoom />
     </section>

@@ -1,21 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  connectToSharedChat,
-  loadSharedChatHistory,
-  sendSharedChatMessage,
-  type ChatConnectionStatus,
-  type SharedChatConnection,
-} from "@/lib/shared-chat";
-import type { ChatMessage } from "@/lib/supabase";
+import { useCallback, useEffect, useState } from "react";
+import { createLocalId, readStoredArray, writeStoredArray } from "@/lib/local-storage";
 import { validateText } from "@/lib/text-validation";
 
+type ChatMessage = {
+  id: string;
+  nickname: string;
+  content: string;
+  created_at: string;
+};
+
 const nicknameKey = "amelia-chat-nickname";
+const messagesKey = "amelia-chat-messages";
 const maximumNicknameLength = 24;
 const maximumMessageLength = 500;
 const maximumStoredMessages = 100;
-const configurationMessage = "Shared chat is not configured yet. Add the Supabase URL and anon key to the frontend environment.";
 
 function isChatMessage(value: unknown): value is ChatMessage {
   if (typeof value !== "object" || value === null) return false;
@@ -28,41 +28,42 @@ function isChatMessage(value: unknown): value is ChatMessage {
   );
 }
 
+function readMessages(): ChatMessage[] {
+  return readStoredArray(messagesKey, isChatMessage, "chat messages")
+    .sort((left, right) => left.created_at.localeCompare(right.created_at))
+    .slice(-maximumStoredMessages);
+}
+
 export function useChat() {
   const [draftNickname, setDraftNickname] = useState("");
   const [nicknameReady, setNicknameReady] = useState(false);
   const [nickname, setNickname] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [online, setOnline] = useState(0);
-  const [connection, setConnection] = useState<"idle" | "connecting" | "connected" | "reconnecting" | "disconnected">("idle");
+  const [connection, setConnection] = useState<"idle" | "connected">("idle");
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
-  const messagesRef = useRef<ChatMessage[]>([]);
-  const channelRef = useRef<SharedChatConnection | null>(null);
-
-  const mergeMessages = useCallback((incoming: ChatMessage[]) => {
-    const merged = new Map(messagesRef.current.map((message) => [message.id, message]));
-    for (const message of incoming) merged.set(message.id, message);
-    const next = [...merged.values()]
-      .sort((left, right) => left.created_at.localeCompare(right.created_at))
-      .slice(-maximumStoredMessages);
-    messagesRef.current = next;
-    setMessages(next);
-  }, []);
 
   useEffect(() => {
     try {
       setDraftNickname(window.localStorage.getItem(nicknameKey) ?? "");
-    } catch {
-      setStatusMessage("Your nickname cannot be saved in this browser.");
+      setMessages(readMessages());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Saved chat data could not be read.");
     }
     setNicknameReady(true);
 
-    return () => {
-      const channel = channelRef.current;
-      channelRef.current = null;
-      if (channel) void channel.disconnect();
+    const syncMessages = (event: StorageEvent) => {
+      if (event.key !== messagesKey && event.key !== null) return;
+      try {
+        setMessages(readMessages());
+        setError("");
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "Saved chat data could not be read.");
+      }
     };
+
+    window.addEventListener("storage", syncMessages);
+    return () => window.removeEventListener("storage", syncMessages);
   }, []);
 
   const joinRoom = useCallback((nicknameInput: string) => {
@@ -79,74 +80,17 @@ export function useChat() {
       return false;
     }
 
-    const previousChannel = channelRef.current;
-    channelRef.current = null;
-    if (previousChannel) {
-      void previousChannel.disconnect().catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : "The previous chat connection could not be closed.");
-      });
-    }
-
     setNickname(clean);
     setDraftNickname(clean);
-    setConnection("connecting");
-    setOnline(0);
+    setConnection("connected");
     setError("");
-    setStatusMessage("Connecting to the shared Cozy Corner…");
-
-    let channel: SharedChatConnection | null = null;
-    channel = connectToSharedChat(clean, {
-      onMessage: (message) => {
-        if (channelRef.current === channel) mergeMessages([message]);
-      },
-      onPresence: (count) => {
-        if (channelRef.current === channel) setOnline(count);
-      },
-      onError: (message) => {
-        if (channelRef.current === channel) setError(message);
-      },
-      onStatus: (status: ChatConnectionStatus) => {
-        if (channelRef.current !== channel) return;
-        if (status === "SUBSCRIBED") {
-          setConnection("connected");
-          setStatusMessage("Connected to the shared Cozy Corner.");
-          setError("");
-          void loadSharedChatHistory()
-            .then((history) => {
-              if (channelRef.current === channel) mergeMessages(history);
-            })
-            .catch((reason: unknown) => {
-              if (channelRef.current === channel) {
-                setError(reason instanceof Error ? reason.message : "Could not load shared chat history.");
-              }
-            });
-        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          setConnection("reconnecting");
-          setError("The shared chat connection was interrupted. Reconnecting…");
-        } else if (status === "CLOSED") {
-          setConnection("disconnected");
-        }
-      },
-    });
-    if (!channel) {
-      setConnection("idle");
-      setError(configurationMessage);
-      return false;
-    }
-
-    channelRef.current = channel;
+    setStatusMessage("Connected to this browser’s Cozy Corner.");
     return true;
-  }, [mergeMessages]);
+  }, []);
 
   const leaveRoom = useCallback(() => {
-    const channel = channelRef.current;
-    channelRef.current = null;
     setConnection("idle");
-    setOnline(0);
-    setStatusMessage("You’ve left the shared room. The conversation remains available to other visitors.");
-    if (channel) void channel.disconnect().catch((reason: unknown) => {
-      setError(reason instanceof Error ? reason.message : "The chat connection could not be closed cleanly.");
-    });
+    setStatusMessage("You’ve left the room. Messages remain saved in this browser.");
   }, []);
 
   const sendMessage = useCallback(async (contentInput: string) => {
@@ -157,25 +101,43 @@ export function useChat() {
       return false;
     }
     if (connection !== "connected" || !nickname) {
-      setError("Connect to the shared room before sending a message.");
+      setError("Join the room before sending a message.");
       return false;
     }
 
+    const message = {
+      id: createLocalId(),
+      nickname,
+      content,
+      created_at: new Date().toISOString(),
+    };
+    const next = [...messages, message].slice(-maximumStoredMessages);
+
     try {
-      const message = await sendSharedChatMessage(nickname, content);
-      if (!isChatMessage(message)) {
-        setError("The shared chat returned an invalid message.");
-        return false;
-      }
-      mergeMessages([message]);
+      writeStoredArray(messagesKey, next);
+      setMessages(next);
       setError("");
-      setStatusMessage("Your message was shared with the room.");
+      setStatusMessage("Your message was saved in this browser.");
       return true;
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Your message could not be shared.");
+    } catch {
+      setError("Your message could not be saved. Check this browser’s storage settings and try again.");
       return false;
     }
-  }, [connection, mergeMessages, nickname]);
+  }, [connection, messages, nickname]);
+
+  const deleteMessage = useCallback((messageId: string) => {
+    const next = messages.filter((message) => message.id !== messageId);
+    try {
+      writeStoredArray(messagesKey, next);
+      setMessages(next);
+      setError("");
+      setStatusMessage("Message deleted from this browser.");
+      return true;
+    } catch {
+      setError("The message could not be deleted. Check this browser’s storage settings and try again.");
+      return false;
+    }
+  }, [messages]);
 
   return {
     draftNickname,
@@ -183,12 +145,12 @@ export function useChat() {
     nicknameReady,
     nickname,
     messages,
-    online,
     connection,
     statusMessage,
     error,
     joinRoom,
     leaveRoom,
     sendMessage,
+    deleteMessage,
   };
 }
